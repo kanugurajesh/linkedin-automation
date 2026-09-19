@@ -6,21 +6,42 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:push": "drizzle-kit push",
+    "typecheck": "tsc --noEmit",
+    "discover": "tsx --env-file=.env.local scripts/discover.ts",
+    "write": "tsx --env-file=.env.local scripts/write.ts",
+    "media:sample": "tsx scripts/media-sample.mts",
+    "queue": "tsx --env-file=.env.local scripts/queue.ts",
+    "worker": "tsx --env-file=.env.local worker/index.ts",
+    "linkedin:auth": "tsx --env-file=.env.local scripts/linkedin-auth.ts"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "@mendable/firecrawl-js": "^4.40.0",
+    "@remotion/bundler": "4.0.526",
+    "@remotion/cli": "4.0.526",
+    "@remotion/renderer": "4.0.526",
+    "drizzle-orm": "^0.45.2",
     "next": "16.3.5",
+    "node-cron": "^4.6.0",
+    "openai": "^7.19.0",
+    "pdf-lib": "^1.17.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "remotion": "4.0.526",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }
