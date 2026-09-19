@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The tests and the build need no real credentials. These placeholders only satisfy config loading.
+      FIRECRAWL_API_KEY: ci-placeholder
+      OPENAI_API_KEY: ci-placeholder
+      OPENAI_MODEL: ci-placeholder
+      TIMEZONE: Asia/Kolkata
+      MAX_POSTS_PER_WEEK: "4"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Generates the typed route helpers (PageProps, RouteContext) that the type check needs.
+      - run: npx next typegen
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

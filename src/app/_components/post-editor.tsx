@@ -1,17 +1,9 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
+import { FOLD, splitAtFold } from "@/lib/fold";
 
-const FOLD = 210; // about where the feed truncates a post behind "see more"
 const BAND = { low: 1000, high: 1600, scale: 2200 }; // the length range that tends to read best
-
-/** Cut at a word boundary near the fold so the marker never lands mid-word. */
-function splitAtFold(text: string): [string, string] {
-  if (text.length <= FOLD) return [text, ""];
-  const space = text.lastIndexOf(" ", FOLD);
-  const cut = space > FOLD * 0.6 ? space : FOLD;
-  return [text.slice(0, cut), text.slice(cut)];
-}
 
 type Props = {
   id: number;

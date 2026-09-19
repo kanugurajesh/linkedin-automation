@@ -14,7 +14,9 @@
     "media:sample": "tsx scripts/media-sample.mts",
     "queue": "tsx --env-file=.env.local scripts/queue.ts",
     "worker": "tsx --env-file=.env.local worker/index.ts",
-    "linkedin:auth": "tsx --env-file=.env.local scripts/linkedin-auth.ts"
+    "linkedin:auth": "tsx --env-file=.env.local scripts/linkedin-auth.ts",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",
@@ -34,7 +36,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^22.20.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",
@@ -42,6 +44,8 @@
     "eslint-config-next": "16.3.5",
     "tailwindcss": "^4",
     "tsx": "^4.23.13",
-    "typescript": "^5"
-  }
+    "typescript": "^5",
+    "vitest": "^5.0.1"
+  },
+  "license": "MIT"
 }

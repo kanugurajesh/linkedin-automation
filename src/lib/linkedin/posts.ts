@@ -1,12 +1,7 @@
 import { api, getAuth } from "./client";
+import { escapeCommentary } from "./text";
 
-/**
- * LinkedIn parses post text as "little text format": these characters are reserved and an
- * unescaped ( ) [ ] { } can silently truncate the post. `#` is left alone so hashtags work.
- */
-export function escapeCommentary(text: string): string {
-  return text.replace(/[\\|{}@\[\]()<>*_~]/g, (c) => `\\${c}`);
-}
+export { escapeCommentary } from "./text";
 
 export type MediaRef = { kind: "image" | "video" | "document"; urn: string; title?: string };
 

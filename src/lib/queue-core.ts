@@ -1,13 +1,12 @@
 import { existsSync } from "node:fs";
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
-import { schedule } from "../../config/schedule";
 import { db, drafts, posts, settings } from "./db";
 import { getEnv } from "./env";
 import { LinkedInError } from "./linkedin/client";
 import { deletePost } from "./linkedin/posts";
-import { currentWeek, localDay, nextSlot } from "./schedule";
-
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+import { parseMetricsCsv } from "./metrics-csv";
+import { evaluatePublish, type Check } from "./publish-rules";
+import { nextSlot } from "./schedule";
 
 export async function getDraft(id: number) {
   const [d] = await db.select().from(drafts).where(eq(drafts.id, id));
@@ -20,84 +19,16 @@ export async function listDrafts(status?: string) {
   return status ? rows.filter((d) => d.status === status) : rows;
 }
 
-export type Check = {
-  /** block: cannot publish. confirm: allowed only if the user explicitly overrides. info: worth knowing. */
-  level: "block" | "confirm" | "info";
-  message: string;
-};
+export { isBlocked, needsConfirmation, type Check } from "./publish-rules";
 
-export const isBlocked = (checks: Check[]) => checks.some((c) => c.level === "block");
-export const needsConfirmation = (checks: Check[]) => checks.some((c) => c.level === "confirm");
-
-/**
- * Everything to tell the user before an out-of-schedule "publish now". One source of truth for the
- * dashboard, the job that publishes, and the CLI, so the safety rules cannot drift apart.
- */
+/** Loads what the rules need from the database and applies them. See publish-rules.ts for the rules. */
 export async function publishChecks(draftId: number, now = new Date()): Promise<Check[]> {
   const d = await getDraft(draftId);
-  const checks: Check[] = [];
-
-  if (["published", "publishing"].includes(d.status)) {
-    return [{ level: "block", message: `This draft is already ${d.status}.` }];
-  }
-  if (d.status === "rejected") checks.push({ level: "block", message: "This draft was rejected. Restore it from its page before publishing." });
-  if (!d.body.trim()) checks.push({ level: "block", message: "The post text is empty." });
-  if (d.body.length > 3000) {
-    checks.push({ level: "block", message: `The post is ${d.body.length.toLocaleString("en-US")} characters. LinkedIn allows at most 3,000. Shorten it first.` });
-  }
-
   const { MAX_POSTS_PER_WEEK: cap } = getEnv("MAX_POSTS_PER_WEEK");
-  const week = new Set(currentWeek(now).map((day) => day.ymd));
-  const inWeek = (t: Date | null | undefined) => !!t && week.has(localDay(t).ymd);
   const since = new Date(now.getTime() - 35 * 86_400_000);
-  const recent = await db.select().from(posts).where(gte(posts.publishedAt, since));
+  const published = await db.select().from(posts).where(gte(posts.publishedAt, since));
   const scheduled = await db.select({ id: drafts.id, at: drafts.scheduledAt }).from(drafts).where(eq(drafts.status, "scheduled"));
-
-  const publishedThisWeek = recent.filter((p) => inWeek(p.publishedAt)).length;
-  const scheduledThisWeek = scheduled.filter((s) => s.id !== draftId && inWeek(s.at)).length;
-  const last7 = recent.filter((p) => p.publishedAt.getTime() > now.getTime() - 7 * 86_400_000).length;
-  const inWeekTotal = publishedThisWeek + scheduledThisWeek;
-
-  if (inWeekTotal >= cap) {
-    checks.push({
-      level: "confirm",
-      message: `You are over your weekly limit. This week already has ${inWeekTotal} of ${cap} posts (${publishedThisWeek} published, ${scheduledThisWeek} scheduled). This would be number ${inWeekTotal + 1}.`,
-    });
-  } else if (last7 >= cap) {
-    checks.push({ level: "confirm", message: `You are over your weekly limit. You published ${last7} posts in the last 7 days and the limit is ${cap}.` });
-  }
-
-  const lastPost = recent.reduce<Date | null>((latest, p) => (!latest || p.publishedAt > latest ? p.publishedAt : latest), null);
-  if (lastPost) {
-    const hours = (now.getTime() - lastPost.getTime()) / 3_600_000;
-    if (hours < schedule.minGapMinutes / 60) {
-      const ago = hours < 1 ? `${Math.max(1, Math.round(hours * 60))} minutes` : `${Math.round(hours)} hours`;
-      checks.push({
-        level: "confirm",
-        message: `You published another post ${ago} ago. Posts closer than ${schedule.minGapMinutes / 60} hours apart tend to split each other's reach.`,
-      });
-    }
-  }
-
-  if (await isPaused()) {
-    checks.push({ level: "confirm", message: "Publishing is paused. This manual post ignores the pause switch." });
-  }
-
-  const l = localDay(now);
-  const hour = Number(l.hm.slice(0, 2));
-  if (!(schedule.days as readonly number[]).includes(l.dow) || hour < 8 || hour >= 19) {
-    checks.push({ level: "info", message: `It is ${l.hm} local time. Your usual slots are ${schedule.times.join(" or ")} on ${schedule.days.map((n) => DAY_NAMES[n]).join(", ")}.` });
-  }
-  if (d.status === "scheduled" && d.scheduledAt) {
-    checks.push({ level: "info", message: "This draft is scheduled. Publishing now cancels its slot." });
-  }
-  if (d.mediaSpec && d.mediaKind !== "none" && !(d.mediaPath && existsSync(d.mediaPath))) {
-    checks.push({ level: "info", message: "The visual is not rendered yet. It will render first, which can take about a minute." });
-  }
-  if (d.firstComment) {
-    checks.push({ level: "info", message: "LinkedIn does not let this app add the first comment. You will get the text to paste under the post." });
-  }
-  return checks;
+  return evaluatePublish({ draft: d, published, scheduled, paused: await isPaused(), now, cap, mediaRendered: !!(d.mediaPath && existsSync(d.mediaPath)) });
 }
 
 /** Times already claimed by scheduled posts or posts published this month, for slot picking. */
@@ -181,29 +112,7 @@ export async function listPosts() {
  * plus any of impressions, reactions, comments. Nothing is written if any row is invalid.
  */
 export async function importMetrics(csv: string): Promise<number> {
-  const lines = csv.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-  if (lines.length < 2) throw new Error("CSV needs a header row and at least one data row");
-  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
-  const col = (name: string) => header.indexOf(name);
-  if (col("post") < 0) throw new Error('CSV header must include a "post" column (the id from `queue posts`)');
-  const fields = ["impressions", "reactions", "comments"] as const;
-  if (!fields.some((f) => col(f) >= 0)) throw new Error("CSV header needs at least one of: impressions, reactions, comments");
-
-  const updates: { id: number; m: Partial<Record<(typeof fields)[number], number>> }[] = [];
-  for (const [i, line] of lines.slice(1).entries()) {
-    const cells = line.split(",").map((c) => c.trim());
-    const id = Number(cells[col("post")]);
-    if (!Number.isInteger(id)) throw new Error(`Row ${i + 2}: bad post id "${cells[col("post")]}"`);
-    const m: Partial<Record<(typeof fields)[number], number>> = {};
-    for (const f of fields) {
-      if (col(f) < 0 || cells[col(f)] === "" || cells[col(f)] === undefined) continue;
-      const n = Number(cells[col(f)].replaceAll(",", ""));
-      if (!Number.isInteger(n) || n < 0) throw new Error(`Row ${i + 2}: bad ${f} "${cells[col(f)]}"`);
-      m[f] = n;
-    }
-    updates.push({ id, m });
-  }
-
+  const updates = parseMetricsCsv(csv);
   const known = new Set((await db.select({ id: posts.id }).from(posts)).map((p) => p.id));
   const missing = updates.filter((u) => !known.has(u.id)).map((u) => u.id);
   if (missing.length) throw new Error(`Unknown post id(s): ${missing.join(", ")}. Nothing was saved.`);
