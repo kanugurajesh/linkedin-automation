@@ -3,7 +3,7 @@ import type { MediaKind } from "../src/lib/ai/media";
 import { checkAuth } from "../src/lib/linkedin/client";
 import { deletePost } from "../src/lib/linkedin/posts";
 import { publishDraft } from "../src/lib/publish";
-import { approve, editBody, getDraft, isPaused, listDrafts, recordMetrics, reject, setMedia, setPaused, stats } from "../src/lib/queue";
+import { approve, editBody, getDraft, importMetrics, isPaused, listDrafts, listPosts, recordMetrics, reject, setMedia, setPaused, stats } from "../src/lib/queue";
 import { formatLocal } from "../src/lib/schedule";
 import { db, posts } from "../src/lib/db";
 import { eq } from "drizzle-orm";
@@ -21,7 +21,9 @@ const HELP = `Usage: npm run queue -- <command> [args]
   retry <id>                                       failed -> scheduled at the next slot
   delete-post <postId>                             remove a published post from LinkedIn
   pause | resume                                   stop/start the worker publishing
+  posts                                            published posts: id, link, and metrics entered so far
   metrics <postId> --impressions N --reactions N --comments N
+  metrics-import --file metrics.csv                bulk entry; header: post,impressions,reactions,comments
   stats                                            what performs, from the metrics you entered
   auth                                             check the LinkedIn token
 `;
@@ -120,6 +122,20 @@ async function main() {
       const num = (v?: string) => (v === undefined ? undefined : Number(v));
       await recordMetrics(id(), { impressions: num(values.impressions), reactions: num(values.reactions), comments: num(values.comments) });
       console.log("Saved.");
+      break;
+    }
+    case "posts": {
+      const rows = await listPosts();
+      if (!rows.length) console.log("No published posts yet.");
+      for (const p of rows) {
+        const m = p.impressions == null ? "no metrics yet" : `${p.impressions} impressions, ${p.reactions ?? "?"} reactions, ${p.comments ?? "?"} comments`;
+        console.log(`#${p.id}  ${formatLocal(p.publishedAt)}  [${p.format}]\n      ${p.hook.slice(0, 80)}\n      ${p.url}\n      ${m}`);
+      }
+      break;
+    }
+    case "metrics-import": {
+      if (!values.file) throw new Error("metrics-import needs --file <csv>");
+      console.log(`Saved metrics for ${await importMetrics(readFileSync(values.file, "utf8"))} post(s).`);
       break;
     }
     case "stats": {

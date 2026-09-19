@@ -1,69 +1,79 @@
-import Image from "next/image";
+import Link from "next/link";
+import { connection } from "next/server";
+import { Week } from "./_components/week";
+import { Empty, Flash, PageHeader, SectionTitle, StatusMark } from "./_components/ui";
+import { checkAuth } from "@/lib/linkedin/client";
+import { getEnv } from "@/lib/env";
+import { listDrafts, listPosts } from "@/lib/queue-core";
 
-export default function Home() {
+async function authStatus() {
+  try {
+    const a = await checkAuth();
+    return a.urnMatches
+      ? { ok: true, text: `Connected as ${a.name}. The token comes from ${a.source === "env" ? ".env.local" : "the login flow"}.` }
+      : { ok: false, text: `Connected as ${a.name}, but LINKEDIN_PERSON_URN does not match this token. Posts would go to the wrong account: fix the URN in .env.local.` };
+  } catch (e) {
+    return { ok: false, text: `LinkedIn rejected the token (${e instanceof Error ? e.message.slice(0, 120) : "unknown error"}). Run npm run linkedin:auth to sign in again.` };
+  }
+}
+
+export default async function Overview({ searchParams }: PageProps<"/">) {
+  await connection();
+  const [params, drafts, posts, auth] = await Promise.all([searchParams, listDrafts(), listPosts(), authStatus()]);
+  const { MAX_POSTS_PER_WEEK } = getEnv("MAX_POSTS_PER_WEEK");
+
+  const attention = drafts.filter((d) => d.status === "draft" || d.status === "failed");
+  const items = [
+    ...drafts.flatMap((d) =>
+      d.status === "scheduled" && d.scheduledAt ? [{ id: d.id, kind: "scheduled" as const, at: d.scheduledAt, label: d.hook, href: `/drafts/${d.id}` }] : [],
+    ),
+    ...posts.map((p) => ({ id: p.id, kind: "published" as const, at: p.publishedAt, label: p.hook, href: "/posts" })),
+  ];
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <>
+      <PageHeader title="This week">
+        {attention.length > 0
+          ? `${attention.length} ${attention.length === 1 ? "draft is" : "drafts are"} waiting for a decision.`
+          : "Nothing is waiting on you. Find a topic on the Trends page, then write a draft from the terminal."}
+      </PageHeader>
+      <Flash params={params} />
+
+      <section className="mb-12">
+        <SectionTitle>Publishing calendar</SectionTitle>
+        <Week items={items} cap={MAX_POSTS_PER_WEEK} />
+      </section>
+
+      <section className="mb-12">
+        <SectionTitle aside={attention.length > 0 ? <Link href="/drafts" className="font-semibold text-ink underline underline-offset-4">See all drafts</Link> : null}>
+          Needs your attention
+        </SectionTitle>
+        {attention.length === 0 ? (
+          <Empty title="You are caught up.">New drafts land here. Failed posts show up here too, with the reason.</Empty>
+        ) : (
+          <ul className="border-t border-rule">
+            {attention.slice(0, 6).map((d) => (
+              <li key={d.id} className="border-b border-rule">
+                <Link href={`/drafts/${d.id}`} className="grid gap-x-6 gap-y-1 py-4 hover:bg-paper md:grid-cols-[9rem_1fr] md:items-baseline">
+                  <StatusMark status={d.status} />
+                  <span>
+                    <span className="line-clamp-2 font-medium leading-snug">{d.hook}</span>
+                    {d.error ? <span className="mt-1 block text-sm text-pencil">{d.error.slice(0, 160)}</span> : null}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <SectionTitle>LinkedIn connection</SectionTitle>
+        <p className={`flex max-w-2xl items-start gap-3 text-[15px] leading-relaxed ${auth.ok ? "text-text" : "text-pencil"}`}>
+          <span aria-hidden className={`mt-1.5 inline-block size-2.5 shrink-0 ${auth.ok ? "bg-leaf" : "bg-pencil"}`} />
+          {auth.text}
+        </p>
+      </section>
+    </>
   );
 }

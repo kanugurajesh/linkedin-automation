@@ -21,6 +21,24 @@ function local(d: Date, tz: string) {
   return { dow: DOW[parts.weekday], ymd: `${parts.year}-${parts.month}-${parts.day}`, hm: `${parts.hour}:${parts.minute}` };
 }
 
+/** Local weekday (0 = Sunday), date (YYYY-MM-DD) and time (HH:MM) of an instant in TIMEZONE. */
+export function localDay(d: Date) {
+  const { TIMEZONE } = getEnv("TIMEZONE");
+  return local(d, TIMEZONE);
+}
+
+/** The seven local dates (Monday first) of the week containing `now`, in TIMEZONE; `weeksAhead` shifts it forward. */
+export function currentWeek(now = new Date(), weeksAhead = 0): { ymd: string; dow: number }[] {
+  const l = localDay(now);
+  const monday = new Date(`${l.ymd}T00:00:00Z`);
+  monday.setUTCDate(monday.getUTCDate() - ((l.dow + 6) % 7) + 7 * weeksAhead);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setUTCDate(monday.getUTCDate() + i);
+    return { ymd: d.toISOString().slice(0, 10), dow: (i + 1) % 7 };
+  });
+}
+
 /** Monday of the local week, so the weekly cap counts calendar weeks in the user's timezone. */
 function weekKey(ymd: string, dow: number): string {
   const d = new Date(`${ymd}T00:00:00Z`);
