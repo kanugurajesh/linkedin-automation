@@ -12,6 +12,11 @@ import { deletePublishedPost, editBody, getDraft, needsConfirmation, publishChec
 // These run on the server and are reachable by direct POST, so validate every input here.
 // The app has no login: it is meant to run on localhost only (npm run dev/start bind 127.0.0.1).
 
+// `npm run demo` runs on sample data with placeholder keys. These actions reach external services
+// (AI, web research, LinkedIn), so in demo mode they refuse instead of trying.
+const DEMO_MESSAGE = "This is the demo. Writing, visuals and publishing are switched off here. Run the app with your own keys to use them.";
+const isDemo = () => process.env.DEMO_MODE === "1";
+
 function intField(form: FormData, name: string): number {
   const n = Number(form.get(name));
   if (!Number.isInteger(n) || n < 0) throw new Error(`Bad ${name}`);
@@ -87,6 +92,7 @@ async function startJob(kind: "write" | "visual" | "publish", params: Record<str
 
 export async function startVisual(form: FormData) {
   const id = intField(form, "id");
+  if (isDemo()) return done(`/drafts/${id}`, "err", DEMO_MESSAGE);
   const kind = String(form.get("kind") ?? "");
   if (kind && !KINDS.has(kind)) return done(`/drafts/${id}`, "err", "Bad visual type");
   let jobId: number;
@@ -105,7 +111,8 @@ const STYLE_IDS = new Set(STYLES.map((s) => s.id as string));
 
 /** Validates the New post form, then writes in the background. Returns an error instead of navigating so typed text is kept. */
 export async function startWrite(_prev: WriteState, form: FormData): Promise<WriteState> {
-  const text = (name: string) => String(form.get(name) ?? "").trim();
+  if (isDemo()) return { error: DEMO_MESSAGE };
+  const text =(name: string) => String(form.get(name) ?? "").trim();
   const topic = text("topic");
   const take = text("take");
   const angle = text("angle");
@@ -146,6 +153,7 @@ export async function startWrite(_prev: WriteState, form: FormData): Promise<Wri
 export async function publishNow(form: FormData) {
   const id = intField(form, "id");
   const here = `/drafts/${id}/publish`;
+  if (isDemo()) return done(here, "err", DEMO_MESSAGE);
   const acknowledged = form.get("ack") === "yes";
   let jobId: number | undefined;
   let failure: string | undefined;
@@ -183,6 +191,7 @@ export async function restoreDraftAction(form: FormData) {
 /** Takes a published post down from LinkedIn. Requires the confirmation field, checked here on the server. */
 export async function removePost(form: FormData) {
   const id = intField(form, "post");
+  if (isDemo()) return done("/posts", "err", DEMO_MESSAGE);
   if (form.get("confirm") !== "yes") return done("/posts", "err", "Deletion was not confirmed. Nothing was deleted.");
   await attempt("/posts", async () => {
     await deletePublishedPost(id);

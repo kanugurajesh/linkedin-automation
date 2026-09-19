@@ -26,7 +26,14 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <div className="min-h-screen md:grid md:grid-cols-[15rem_1fr]">
           <Rail name={brand.name} toReview={toReview} scheduled={scheduled} paused={paused} togglePause={togglePause} />
           <main className="px-5 py-8 md:px-12 md:py-12">
-            <div className="mx-auto max-w-5xl">{children}</div>
+            <div className="mx-auto max-w-5xl">
+              {process.env.DEMO_MODE === "1" ? (
+                <p className="mb-8 border-l-4 border-proof bg-paper px-4 py-3 text-[15px] leading-relaxed">
+                  <span className="font-semibold">Demo with sample data.</span> Everything you see is made up. Writing, visuals and publishing are switched off; editing, scheduling and rejecting drafts work.
+                </p>
+              ) : null}
+              {children}
+            </div>
           </main>
         </div>
       </body>

@@ -8,6 +8,7 @@ import { activeJobs } from "@/lib/jobs";
 import { listDrafts, listPosts } from "@/lib/queue-core";
 
 async function authStatus() {
+  if (process.env.DEMO_MODE === "1") return { ok: false, text: "Demo: LinkedIn is not connected, so nothing can be published." };
   try {
     const a = await checkAuth();
     return a.urnMatches

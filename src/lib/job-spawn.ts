@@ -10,7 +10,7 @@ import { failJob } from "./jobs";
 export function spawnJob(jobId: number) {
   const child = spawn(
     process.execPath,
-    [path.resolve("node_modules/tsx/dist/cli.mjs"), "--env-file=.env.local", "scripts/job.ts", String(jobId)],
+    [path.resolve("node_modules/tsx/dist/cli.mjs"), "--env-file-if-exists=.env.local", "scripts/job.ts", String(jobId)],
     { cwd: process.cwd(), detached: true, stdio: "ignore", windowsHide: true },
   );
   child.on("error", (e) => void failJob(jobId, `Could not start the background process: ${e.message}`));

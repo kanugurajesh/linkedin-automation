@@ -11,7 +11,7 @@ export function runQueue(args: string[], timeoutMs = 10 * 60_000): Promise<{ ok:
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
-      [path.resolve("node_modules/tsx/dist/cli.mjs"), "--env-file=.env.local", "scripts/queue.ts", ...args],
+      [path.resolve("node_modules/tsx/dist/cli.mjs"), "--env-file-if-exists=.env.local", "scripts/queue.ts", ...args],
       { cwd: process.cwd(), windowsHide: true },
     );
     let output = "";

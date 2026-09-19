@@ -9,14 +9,16 @@
     "lint": "eslint",
     "db:push": "drizzle-kit push",
     "typecheck": "tsc --noEmit",
-    "discover": "tsx --env-file=.env.local scripts/discover.ts",
-    "write": "tsx --env-file=.env.local scripts/write.ts",
+    "discover": "tsx --env-file-if-exists=.env.local scripts/discover.ts",
+    "write": "tsx --env-file-if-exists=.env.local scripts/write.ts",
     "media:sample": "tsx scripts/media-sample.mts",
-    "queue": "tsx --env-file=.env.local scripts/queue.ts",
-    "worker": "tsx --env-file=.env.local worker/index.ts",
-    "linkedin:auth": "tsx --env-file=.env.local scripts/linkedin-auth.ts",
+    "queue": "tsx --env-file-if-exists=.env.local scripts/queue.ts",
+    "worker": "tsx --env-file-if-exists=.env.local worker/index.ts",
+    "linkedin:auth": "tsx --env-file-if-exists=.env.local scripts/linkedin-auth.ts",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "demo": "tsx scripts/demo.ts",
+    "demo:seed": "tsx scripts/demo.ts --seed-only"
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",
@@ -47,5 +49,8 @@
     "typescript": "^5",
     "vitest": "^5.0.1"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.9"
+  }
 }
