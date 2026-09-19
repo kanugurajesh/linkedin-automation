@@ -120,19 +120,19 @@ The job page polls `/api/jobs/[id]`. A `running` job that has not reported progr
 ### Draft lifecycle
 
 ```mermaid
-stateDiagram-v2
-    [*] --> draft: written
-    draft --> scheduled: approve (next free slot or chosen time)
-    draft --> rejected: reject
-    rejected --> draft: restore
-    scheduled --> rejected: reject
-    scheduled --> publishing: worker tick or "publish now"
-    draft --> publishing: "publish now"
-    failed --> publishing: "publish now"
-    publishing --> published: LinkedIn accepted the post
-    publishing --> failed: upload or publish error
-    failed --> scheduled: retry or approve again
-    published --> draft: delete post on LinkedIn
+flowchart LR
+    start(["written"]) --> draft
+    draft["draft"] -->|"approve"| scheduled["scheduled"]
+    scheduled -->|"worker tick"| publishing["publishing"]
+    draft -->|"publish now"| publishing
+    publishing -->|"LinkedIn accepted"| published["published"]
+    publishing -->|"upload or publish error"| failed["failed"]
+    failed -->|"retry or approve again"| scheduled
+    failed -->|"publish now"| publishing
+    draft -->|"reject"| rejected["rejected"]
+    scheduled -->|"reject"| rejected
+    rejected -->|"restore"| draft
+    published -->|"delete post on LinkedIn"| draft
 ```
 
 Moving into `publishing` is a single conditional `UPDATE ... WHERE status IN (...)`. Whoever wins that update publishes, and the loser gets an error, which is why the worker and a manual publish cannot both post the same draft. After the post is live, the draft is never moved back to `failed`, even if the first comment or a database write fails afterwards.
