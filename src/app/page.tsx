@@ -4,6 +4,7 @@ import { Week } from "./_components/week";
 import { Empty, Flash, PageHeader, SectionTitle, StatusMark } from "./_components/ui";
 import { checkAuth } from "@/lib/linkedin/client";
 import { getEnv } from "@/lib/env";
+import { activeJobs } from "@/lib/jobs";
 import { listDrafts, listPosts } from "@/lib/queue-core";
 
 async function authStatus() {
@@ -19,7 +20,7 @@ async function authStatus() {
 
 export default async function Overview({ searchParams }: PageProps<"/">) {
   await connection();
-  const [params, drafts, posts, auth] = await Promise.all([searchParams, listDrafts(), listPosts(), authStatus()]);
+  const [params, drafts, posts, auth, running] = await Promise.all([searchParams, listDrafts(), listPosts(), authStatus(), activeJobs()]);
   const { MAX_POSTS_PER_WEEK } = getEnv("MAX_POSTS_PER_WEEK");
 
   const attention = drafts.filter((d) => d.status === "draft" || d.status === "failed");
@@ -38,6 +39,14 @@ export default async function Overview({ searchParams }: PageProps<"/">) {
           : "Nothing is waiting on you. Find a topic on the Trends page, then write a draft from the terminal."}
       </PageHeader>
       <Flash params={params} />
+      {running.map((j) => (
+        <p key={j.id} className="mb-8 border-l-4 border-proof bg-paper px-4 py-3 text-[15px]">
+          {{ write: "Drafts are being written", visual: "A visual is being created", publish: "A post is being published" }[j.kind] ?? "A job is running"}: {j.step ?? "working"}.{" "}
+          <Link href={`/jobs/${j.id}`} className="font-semibold text-ink underline underline-offset-4">
+            See progress
+          </Link>
+        </p>
+      ))}
 
       <section className="mb-12">
         <SectionTitle>Publishing calendar</SectionTitle>

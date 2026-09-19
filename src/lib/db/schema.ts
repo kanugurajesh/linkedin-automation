@@ -63,6 +63,22 @@ export const settings = sqliteTable("settings", {
   value: text("value", { mode: "json" }).$type<unknown>().notNull(),
 });
 
+/** Long-running work (writing, rendering, publishing) started from the dashboard and run in a separate process. */
+export const jobs = sqliteTable("jobs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  kind: text("kind").notNull(), // write | visual | publish
+  params: text("params", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  status: text("status").notNull().default("running"), // running | done | failed
+  step: text("step"), // what it is doing right now
+  log: text("log", { mode: "json" }).$type<string[]>().notNull().default(sql`'[]'`), // steps already finished
+  result: text("result", { mode: "json" }).$type<Record<string, unknown>>(),
+  error: text("error"),
+  createdAt: createdAt(),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
 export const linkedinAuth = sqliteTable("linkedin_auth", {
   id: integer("id").primaryKey(),
   accessToken: text("access_token").notNull(),

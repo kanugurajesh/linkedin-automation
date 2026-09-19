@@ -12,6 +12,7 @@ type Props = {
 };
 
 const ITEMS = [
+  { href: "/new", label: "New post", strong: true },
   { href: "/", label: "Overview" },
   { href: "/trends", label: "Trends" },
   { href: "/drafts", label: "Drafts" },
@@ -45,7 +46,7 @@ export function Rail({ name, toReview, scheduled, paused, togglePause }: Props) 
               key={item.href}
               href={item.href}
               aria-current={on ? "page" : undefined}
-              className={`flex items-center justify-between gap-6 whitespace-nowrap rounded-[3px] px-3 py-2 text-[15px] font-medium transition-colors ${on ? "bg-white text-ink" : "text-white/80 hover:bg-white/10"}`}
+              className={`flex items-center justify-between gap-6 whitespace-nowrap rounded-[3px] px-3 py-2 text-[15px] transition-colors ${"strong" in item && item.strong ? "border border-white/35 font-bold" : "font-medium"} ${on ? "bg-white text-ink" : "text-white/80 hover:bg-white/10"}`}
             >
               {item.label}
               {item.href === "/drafts" && toReview > 0 ? (

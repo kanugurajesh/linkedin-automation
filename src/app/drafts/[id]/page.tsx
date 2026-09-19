@@ -3,7 +3,7 @@ import path from "node:path";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { approveDraft, planVisual, rejectDraft, saveDraft } from "../../actions";
+import { approveDraft, rejectDraft, restoreDraftAction, saveDraft, startVisual } from "../../actions";
 import { CopyButton } from "../../_components/copy-button";
 import { PostEditor } from "../../_components/post-editor";
 import { btnDanger, btnPrimary, btnQuiet, field, Flash, StatusMark } from "../../_components/ui";
@@ -88,7 +88,13 @@ export default async function DraftPage({ params, searchParams }: PageProps<"/dr
             {locked ? (
               <p className="text-[15px] leading-relaxed text-muted">{draft.status === "published" ? "This post is live on LinkedIn." : "Publishing right now."}</p>
             ) : draft.status === "rejected" ? (
-              <p className="text-[15px] leading-relaxed text-muted">Rejected. It will not be published.</p>
+              <div className="space-y-3">
+                <p className="text-[15px] leading-relaxed text-muted">Rejected. It will not be published.</p>
+                <form action={restoreDraftAction}>
+                  <input type="hidden" name="id" value={draft.id} />
+                  <button className={btnQuiet}>Restore to drafts</button>
+                </form>
+              </div>
             ) : (
               <div className="space-y-4">
                 {draft.status === "scheduled" && draft.scheduledAt ? (
@@ -106,6 +112,12 @@ export default async function DraftPage({ params, searchParams }: PageProps<"/dr
                     <button className={`${btnPrimary} w-full`}>Approve and schedule</button>
                   </form>
                 ) : null}
+                <div className="border-t border-rule pt-4">
+                  <Link href={`/drafts/${draft.id}/publish`} className={`${btnQuiet} w-full`}>
+                    Publish now
+                  </Link>
+                  <p className="mt-2 text-sm leading-relaxed text-muted">Skips the schedule. You will see a check first, and a warning if it goes over your limits.</p>
+                </div>
                 <form action={rejectDraft}>
                   <input type="hidden" name="id" value={draft.id} />
                   <button className={btnDanger}>{draft.status === "scheduled" ? "Cancel and reject" : "Reject draft"}</button>
@@ -142,7 +154,7 @@ export default async function DraftPage({ params, searchParams }: PageProps<"/dr
               </div>
             ) : null}
             {locked ? null : (
-              <form action={planVisual} className="space-y-3">
+              <form action={startVisual} className="space-y-3">
                 <input type="hidden" name="id" value={draft.id} />
                 <label className="block text-sm text-muted">
                   Format
@@ -155,7 +167,7 @@ export default async function DraftPage({ params, searchParams }: PageProps<"/dr
                   </select>
                 </label>
                 <button className={`${btnQuiet} w-full`}>{hasVisual ? "Redo the visual" : "Create a visual"}</button>
-                <p className="text-sm text-muted">This can take up to a minute. The page waits.</p>
+                <p className="text-sm text-muted">This runs in the background and takes up to a minute.</p>
               </form>
             )}
           </Margin>

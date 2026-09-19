@@ -1,6 +1,6 @@
 import { connection } from "next/server";
-import { saveMetrics } from "../actions";
-import { btnQuiet, Empty, field, Flash, PageHeader, SectionTitle } from "../_components/ui";
+import { removePost, saveMetrics } from "../actions";
+import { btnQuiet, btnWarn, Empty, field, Flash, PageHeader, SectionTitle } from "../_components/ui";
 import { listPosts, stats } from "@/lib/queue-core";
 import { formatLocal } from "@/lib/schedule";
 
@@ -49,6 +49,18 @@ export default async function Posts({ searchParams }: PageProps<"/posts">) {
                   ))}
                   <button className={btnQuiet}>Save numbers</button>
                 </form>
+                <details className="lg:col-span-2">
+                  <summary className="cursor-pointer text-sm font-semibold text-pencil underline underline-offset-4">Delete from LinkedIn</summary>
+                  <form action={removePost} className="mt-3 max-w-xl space-y-3 border-l-4 border-pencil bg-paper p-4">
+                    <input type="hidden" name="post" value={p.id} />
+                    <p className="text-[15px] leading-relaxed">This removes the post from your profile. Its reactions and comments go with it. The draft returns to your drafts so you can fix it and publish again.</p>
+                    <label className="flex cursor-pointer items-start gap-3 text-[15px]">
+                      <input type="checkbox" name="confirm" value="yes" required className="mt-1 size-4 accent-[var(--color-pencil)]" />
+                      <span>I want to delete this post from LinkedIn.</span>
+                    </label>
+                    <button className={btnWarn}>Delete post</button>
+                  </form>
+                </details>
               </li>
             ))}
           </ul>

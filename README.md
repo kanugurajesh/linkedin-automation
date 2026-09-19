@@ -17,6 +17,9 @@ discover → pick a topic + your take → write drafts → (visual) → review �
 | Visuals: PDF carousel, image card, 15s stat video (Remotion) | |
 | Publish text, image, PDF carousel, video; delete posts | |
 | Scheduler with weekly cap, pause switch | |
+| Write a post from the browser (topic + your take), with optional visual, running in the background | |
+| "Publish now" outside the schedule, with a check screen and a required confirmation when over your limits | |
+| Delete a published post from LinkedIn (from the Posts page) | |
 
 ## Setup
 
@@ -85,12 +88,28 @@ Other queue commands: `reject`, `publish <id> [--dry-run]` (post now), `retry`, 
 npm run dev      # http://127.0.0.1:3000  (bound to localhost only; use `npm run build && npm run start` for a production run)
 ```
 
-- **Overview:** LinkedIn connection status, draft counts, what's scheduled next, pause/resume publishing.
-- **Trends:** the topics from `npm run discover`, with angles and the exact `write` command to run.
-- **Drafts:** read and edit the text, preview the rendered visual, plan/re-render the visual, approve (next free slot or a time you pick) or reject. The facts the writer used are listed with their sources.
-- **Posts:** link to each published post, enter impressions/reactions/comments, and see which formats perform.
+You can do the whole flow here; the terminal commands above still work too.
 
-Writing a draft still runs in the terminal (`npm run write`), because it needs your own take. The dashboard has no login, so keep it on localhost and don't expose the port: anyone who can reach it can schedule posts to your profile. Publishing itself is still done by `npm run worker`.
+- **New post:** enter a topic (or start from a trend), your take, an optional source link and angle, pick up to three writing styles, and optionally ask for a visual (carousel, image or video) for every draft. It researches and writes in the background: you land on a progress page that survives reloads and closing the tab. Deciding on the visual later is faster, because you only render one for the draft you keep.
+- **Overview:** LinkedIn connection status, a two-week publishing calendar, what needs a decision, and any job that is running.
+- **Trends:** the topics from `npm run discover`, each with a "Write a post from this" button.
+- **Drafts:** read and edit the text with a live preview of what the feed shows before "see more", check sources, create or redo the visual (also a background job), approve into the next free slot or a time you pick, reject or restore.
+- **Publish now:** on a draft, skips the schedule and does not need the worker. A check screen comes first (below). After it goes out you get the LinkedIn link and the first-comment text to paste.
+- **Posts:** enter impressions/reactions/comments, see what performs, or delete a post from LinkedIn (confirmation required; the draft comes back to your drafts and the post stops counting toward the weekly limit).
+
+Long jobs (writing, visuals, publishing) run as separate processes started by the dashboard (`scripts/job.ts`) and report progress through the `jobs` table. Only one job of each kind runs at a time, and a job that stops reporting for 20 minutes is marked failed.
+
+The dashboard has no login, so keep it on localhost and don't expose the port: anyone who can reach it can schedule or publish posts to your profile.
+
+### The publish-now check
+
+Before a manual publish the app checks and shows:
+
+- **Blocks** (cannot publish): the draft is already published or rejected, the text is empty, or it is over LinkedIn's 3,000-character limit.
+- **Needs your confirmation** (you must tick a box; the server enforces it): over your weekly limit (published + scheduled this calendar week, or the last 7 days), another post less than 20 hours ago, or publishing is paused.
+- **Good to know:** outside your usual posting days/hours, the visual still has to render, the first comment must be pasted by hand.
+
+The terminal has the same rules: `npm run queue -- publish <id>` prints them and needs `--yes` to go over your limits.
 
 **Read drafts before approving.** The writer only uses facts scraped from real sources and never invents your experience, but drafts can run long or lean on one source. Trim them; check the sources.
 
@@ -99,14 +118,14 @@ Writing a draft still runs in the terminal (`npm run write`), because it needs y
 - Nothing publishes unless a draft is approved (scheduled) or you run `queue publish`.
 - A draft is claimed atomically before publishing, so the worker and a manual publish can't double-post.
 - If a post goes live but a later step fails, the draft stays "published" (retrying would duplicate it).
-- `queue pause` stops the worker; the weekly cap defers extra posts.
+- `queue pause` stops the worker; the weekly cap defers extra posts. A manual publish ignores both, but only after an explicit confirmation.
 - Secrets live in `.env.local` (gitignored). `data/` (database) and `out/` (rendered media) are gitignored too.
 
 ## Layout
 
 ```
 config/       niche, brand, schedule
-scripts/      discover, write, queue (CLI), linkedin-auth, media-sample
+scripts/      discover, write, queue (CLI), job (background runner for the dashboard), linkedin-auth, media-sample
 worker/       scheduler process
 remotion/     video/image/carousel compositions
 src/app/      web dashboard (Next.js): pages, server actions, media preview route

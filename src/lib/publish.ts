@@ -46,7 +46,7 @@ export interface PublishResult {
  */
 export async function publishDraft(
   id: number,
-  opts: { dryRun?: boolean; from?: string[] } = {},
+  opts: { dryRun?: boolean; from?: string[]; onProgress?: (step: string) => void | Promise<void> } = {},
 ): Promise<PublishResult> {
   const from = opts.from ?? ["scheduled"];
   const [before] = await db.select().from(drafts).where(eq(drafts.id, id));
@@ -70,8 +70,12 @@ export async function publishDraft(
 
   let postUrn: string;
   try {
+    const needsRender = !!draft.mediaSpec && draft.mediaKind !== "none" && !(draft.mediaPath && existsSync(draft.mediaPath));
+    if (needsRender) await opts.onProgress?.("Rendering the visual");
     const file = await ensureMedia(draft);
+    if (file) await opts.onProgress?.("Uploading the visual to LinkedIn (a video can take a few minutes to process)");
     const media = file ? await upload(draft, file) : undefined;
+    await opts.onProgress?.("Publishing the post to LinkedIn");
     postUrn = await publishPost(draft.body, media);
   } catch (e) {
     await db.update(drafts).set({ status: "failed", error: e instanceof Error ? e.message : String(e) }).where(eq(drafts.id, id));

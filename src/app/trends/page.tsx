@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { connection } from "next/server";
-import { CopyButton } from "../_components/copy-button";
-import { Empty, PageHeader } from "../_components/ui";
+import Link from "next/link";
+import { btnPrimary, Empty, PageHeader } from "../_components/ui";
 import { db, topics } from "@/lib/db";
 
 const SOURCE: Record<string, string> = { hn: "Hacker News", news: "News search", producthunt: "Product Hunt", manual: "Added by you" };
@@ -13,7 +13,7 @@ export default async function Trends() {
   return (
     <>
       <PageHeader title="Trends">
-        Stories ranked by how recent they are, how many outlets cover them, and how much people engage. Refresh the list with <code className="font-semibold text-text">npm run discover</code>.
+        Stories ranked by how recent they are, how many outlets cover them, and how much people engage. Refresh the list with <code className="font-semibold text-text">npm run discover</code> in the terminal.
       </PageHeader>
 
       {rows.length === 0 ? (
@@ -21,7 +21,6 @@ export default async function Trends() {
       ) : (
         <ul className="border-t border-rule">
           {rows.map((t) => {
-            const cmd = `npm run write -- --topic ${t.id} --take "your one-line opinion"`;
             return (
               <li key={t.id} className="grid gap-x-8 gap-y-4 border-b border-rule py-7 md:grid-cols-[4.5rem_1fr]">
                 <div>
@@ -51,9 +50,10 @@ export default async function Trends() {
                       ))}
                     </ul>
                   ) : null}
-                  <div className="mt-5 flex flex-wrap items-center gap-3">
-                    <code className="min-w-0 max-w-full overflow-x-auto bg-paper px-3 py-2 text-sm">{cmd}</code>
-                    <CopyButton text={cmd} label="Copy command" />
+                  <div className="mt-5">
+                    <Link href={`/new?topic=${t.id}`} className={btnPrimary}>
+                      Write a post from this
+                    </Link>
                   </div>
                 </div>
               </li>

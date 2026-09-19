@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { db, drafts } from "../db";
+import { FORMAT_HINTS } from "../formats";
 import { generate } from "./client";
 import type { Fact } from "./research";
 import { HUMAN_RULES, lintPost, loadVoice, stripEmDashes, type LintIssue } from "./style";
@@ -11,16 +12,10 @@ export interface WriteInput {
   angle?: string;
   personalTake: string; // required: the one thing that makes the post yours
   facts: Fact[];
-  variants?: number;
+  variants?: number; // first N styles, used when `formats` is not given
+  formats?: string[]; // explicit styles, e.g. ["contrarian", "howto"]
+  onProgress?: (step: string) => void | Promise<void>;
 }
-
-const FORMAT_HINTS: Record<string, string> = {
-  contrarian: "Open with a claim most people in the field would push back on, then back it with the facts.",
-  story: "Tell it as a short sequence of events from the facts, told about the source or the people in it. Do not invent scenes or personal history for the author beyond their take.",
-  listicle: "A numbered list (1., 2., 3.) of 3-5 concrete points, each one line plus a specific detail. Keep the numbering.",
-  analysis: "Lead with the single most surprising number or finding, then explain what it means.",
-  howto: "Give a practical sequence of steps someone could follow today, grounded in the facts.",
-};
 
 function context(input: WriteInput) {
   const { description, samples } = loadVoice();
@@ -33,9 +28,9 @@ const draftSchema = z.object({
   variants: z.array(z.object({ format: z.string(), body: z.string() })),
 });
 
-async function draftVariants(input: WriteInput, n: number) {
+async function draftVariants(input: WriteInput, formats: string[]) {
   const { facts, voice } = context(input);
-  const formats = Object.keys(FORMAT_HINTS).slice(0, n);
+  const n = formats.length;
   const out = await generate({
     schema: draftSchema,
     name: "drafts",
@@ -137,11 +132,15 @@ export interface WrittenDraft {
 
 /** Full pipeline: draft variants -> humanize -> hook -> lint/fix -> save to the drafts table. */
 export async function writePosts(input: WriteInput): Promise<WrittenDraft[]> {
-  const n = input.variants ?? 3;
+  const formats = input.formats?.filter((f) => f in FORMAT_HINTS) ?? [];
+  if (formats.length === 0) formats.push(...Object.keys(FORMAT_HINTS).slice(0, input.variants ?? 3));
   const { corpus } = context(input);
   const batchId = randomUUID();
+  let finished = 0;
 
-  const raw = await draftVariants(input, n);
+  await input.onProgress?.(`Writing ${formats.length} ${formats.length === 1 ? "draft" : "drafts"} from your take and the sources`);
+  const raw = await draftVariants(input, formats);
+  await input.onProgress?.("Polishing each draft: natural wording, stronger opening, fact and claim checks");
   const firstComment = `Sources:\n${[...new Set(input.facts.map((f) => f.sourceUrl))].slice(0, 4).join("\n")}`;
 
   return Promise.all(
@@ -166,6 +165,8 @@ export async function writePosts(input: WriteInput): Promise<WrittenDraft[]> {
           facts: input.facts,
         })
         .returning({ id: drafts.id });
+      finished++;
+      await input.onProgress?.(`Polishing each draft (${finished} of ${raw.length} finished)`);
       return { id: row.id, format: v.format, body, remainingIssues: issues };
     }),
   );

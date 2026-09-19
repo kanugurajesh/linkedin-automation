@@ -70,6 +70,8 @@ export const btnPrimary =
   "inline-flex items-center justify-center rounded-[3px] bg-ink px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-ink-soft disabled:opacity-50";
 export const btnQuiet =
   "inline-flex items-center justify-center rounded-[3px] border border-rule bg-paper px-4 py-2 text-sm font-semibold text-ink transition-colors hover:border-ink";
+export const btnWarn =
+  "inline-flex items-center justify-center rounded-[3px] bg-pencil px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-[#8f2d20]";
 export const btnDanger =
   "inline-flex items-center py-2 text-sm font-semibold text-pencil underline underline-offset-4 hover:no-underline";
 export const field = "rounded-[3px] border border-rule bg-paper px-3 py-2 text-sm text-text placeholder:text-muted";

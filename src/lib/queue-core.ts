@@ -1,6 +1,13 @@
+import { existsSync } from "node:fs";
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { schedule } from "../../config/schedule";
 import { db, drafts, posts, settings } from "./db";
-import { nextSlot } from "./schedule";
+import { getEnv } from "./env";
+import { LinkedInError } from "./linkedin/client";
+import { deletePost } from "./linkedin/posts";
+import { currentWeek, localDay, nextSlot } from "./schedule";
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export async function getDraft(id: number) {
   const [d] = await db.select().from(drafts).where(eq(drafts.id, id));
@@ -11,6 +18,86 @@ export async function getDraft(id: number) {
 export async function listDrafts(status?: string) {
   const rows = await db.select().from(drafts).orderBy(desc(drafts.id));
   return status ? rows.filter((d) => d.status === status) : rows;
+}
+
+export type Check = {
+  /** block: cannot publish. confirm: allowed only if the user explicitly overrides. info: worth knowing. */
+  level: "block" | "confirm" | "info";
+  message: string;
+};
+
+export const isBlocked = (checks: Check[]) => checks.some((c) => c.level === "block");
+export const needsConfirmation = (checks: Check[]) => checks.some((c) => c.level === "confirm");
+
+/**
+ * Everything to tell the user before an out-of-schedule "publish now". One source of truth for the
+ * dashboard, the job that publishes, and the CLI, so the safety rules cannot drift apart.
+ */
+export async function publishChecks(draftId: number, now = new Date()): Promise<Check[]> {
+  const d = await getDraft(draftId);
+  const checks: Check[] = [];
+
+  if (["published", "publishing"].includes(d.status)) {
+    return [{ level: "block", message: `This draft is already ${d.status}.` }];
+  }
+  if (d.status === "rejected") checks.push({ level: "block", message: "This draft was rejected. Restore it from its page before publishing." });
+  if (!d.body.trim()) checks.push({ level: "block", message: "The post text is empty." });
+  if (d.body.length > 3000) {
+    checks.push({ level: "block", message: `The post is ${d.body.length.toLocaleString("en-US")} characters. LinkedIn allows at most 3,000. Shorten it first.` });
+  }
+
+  const { MAX_POSTS_PER_WEEK: cap } = getEnv("MAX_POSTS_PER_WEEK");
+  const week = new Set(currentWeek(now).map((day) => day.ymd));
+  const inWeek = (t: Date | null | undefined) => !!t && week.has(localDay(t).ymd);
+  const since = new Date(now.getTime() - 35 * 86_400_000);
+  const recent = await db.select().from(posts).where(gte(posts.publishedAt, since));
+  const scheduled = await db.select({ id: drafts.id, at: drafts.scheduledAt }).from(drafts).where(eq(drafts.status, "scheduled"));
+
+  const publishedThisWeek = recent.filter((p) => inWeek(p.publishedAt)).length;
+  const scheduledThisWeek = scheduled.filter((s) => s.id !== draftId && inWeek(s.at)).length;
+  const last7 = recent.filter((p) => p.publishedAt.getTime() > now.getTime() - 7 * 86_400_000).length;
+  const inWeekTotal = publishedThisWeek + scheduledThisWeek;
+
+  if (inWeekTotal >= cap) {
+    checks.push({
+      level: "confirm",
+      message: `You are over your weekly limit. This week already has ${inWeekTotal} of ${cap} posts (${publishedThisWeek} published, ${scheduledThisWeek} scheduled). This would be number ${inWeekTotal + 1}.`,
+    });
+  } else if (last7 >= cap) {
+    checks.push({ level: "confirm", message: `You are over your weekly limit. You published ${last7} posts in the last 7 days and the limit is ${cap}.` });
+  }
+
+  const lastPost = recent.reduce<Date | null>((latest, p) => (!latest || p.publishedAt > latest ? p.publishedAt : latest), null);
+  if (lastPost) {
+    const hours = (now.getTime() - lastPost.getTime()) / 3_600_000;
+    if (hours < schedule.minGapMinutes / 60) {
+      const ago = hours < 1 ? `${Math.max(1, Math.round(hours * 60))} minutes` : `${Math.round(hours)} hours`;
+      checks.push({
+        level: "confirm",
+        message: `You published another post ${ago} ago. Posts closer than ${schedule.minGapMinutes / 60} hours apart tend to split each other's reach.`,
+      });
+    }
+  }
+
+  if (await isPaused()) {
+    checks.push({ level: "confirm", message: "Publishing is paused. This manual post ignores the pause switch." });
+  }
+
+  const l = localDay(now);
+  const hour = Number(l.hm.slice(0, 2));
+  if (!(schedule.days as readonly number[]).includes(l.dow) || hour < 8 || hour >= 19) {
+    checks.push({ level: "info", message: `It is ${l.hm} local time. Your usual slots are ${schedule.times.join(" or ")} on ${schedule.days.map((n) => DAY_NAMES[n]).join(", ")}.` });
+  }
+  if (d.status === "scheduled" && d.scheduledAt) {
+    checks.push({ level: "info", message: "This draft is scheduled. Publishing now cancels its slot." });
+  }
+  if (d.mediaSpec && d.mediaKind !== "none" && !(d.mediaPath && existsSync(d.mediaPath))) {
+    checks.push({ level: "info", message: "The visual is not rendered yet. It will render first, which can take about a minute." });
+  }
+  if (d.firstComment) {
+    checks.push({ level: "info", message: "LinkedIn does not let this app add the first comment. You will get the text to paste under the post." });
+  }
+  return checks;
 }
 
 /** Times already claimed by scheduled posts or posts published this month, for slot picking. */
@@ -32,6 +119,13 @@ export async function scheduleDraft(id: number, at?: Date): Promise<Date> {
   const when = at ?? nextSlot(await takenTimes());
   await db.update(drafts).set({ status: "scheduled", scheduledAt: when, error: null }).where(eq(drafts.id, id));
   return when;
+}
+
+/** Bring a rejected draft back so it can be edited, scheduled or published. */
+export async function restoreDraft(id: number) {
+  const d = await getDraft(id);
+  if (d.status !== "rejected") throw new Error(`Draft #${id} is "${d.status}", only rejected drafts can be restored`);
+  await db.update(drafts).set({ status: "draft" }).where(eq(drafts.id, id));
 }
 
 export async function reject(id: number) {
@@ -146,4 +240,20 @@ export async function stats() {
     avgReactions: g.measured ? Math.round(g.reactions / g.measured) : null,
     avgComments: g.measured ? Math.round(g.comments / g.measured) : null,
   }));
+}
+
+/**
+ * Takes a published post down from LinkedIn, then removes it from the weekly count and puts the draft
+ * back so it can be edited and published again. A post LinkedIn no longer has (404) counts as deleted.
+ */
+export async function deletePublishedPost(postId: number) {
+  const [p] = await db.select().from(posts).where(eq(posts.id, postId));
+  if (!p) throw new Error(`No post #${postId}`);
+  try {
+    await deletePost(p.linkedinUrn);
+  } catch (e) {
+    if (!(e instanceof LinkedInError && e.status === 404)) throw e;
+  }
+  await db.delete(posts).where(eq(posts.id, postId));
+  await db.update(drafts).set({ status: "draft", scheduledAt: null, error: null }).where(eq(drafts.id, p.draftId));
 }

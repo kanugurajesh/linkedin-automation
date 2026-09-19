@@ -1,12 +1,9 @@
 import { readFileSync } from "node:fs";
 import type { MediaKind } from "../src/lib/ai/media";
 import { checkAuth } from "../src/lib/linkedin/client";
-import { deletePost } from "../src/lib/linkedin/posts";
 import { publishDraft } from "../src/lib/publish";
-import { approve, editBody, getDraft, importMetrics, isPaused, listDrafts, listPosts, recordMetrics, reject, setMedia, setPaused, stats } from "../src/lib/queue";
+import { approve, deletePublishedPost, editBody, getDraft, importMetrics, isBlocked, isPaused, listDrafts, listPosts, needsConfirmation, publishChecks, recordMetrics, reject, setMedia, setPaused, stats } from "../src/lib/queue";
 import { formatLocal } from "../src/lib/schedule";
-import { db, posts } from "../src/lib/db";
-import { eq } from "drizzle-orm";
 import { parseArgs } from "node:util";
 
 const HELP = `Usage: npm run queue -- <command> [args]
@@ -17,9 +14,9 @@ const HELP = `Usage: npm run queue -- <command> [args]
   edit <id> --file post.txt                        replace the post text
   approve <id> [--at "2026-09-23T09:00"]           schedule (next free slot unless --at, local time)
   reject <id>
-  publish <id> [--dry-run]                         post right now (skips the schedule, not the safety checks)
+  publish <id> [--dry-run] [--yes]                 post right now. Prints the safety checks; over your limits needs --yes
   retry <id>                                       failed -> scheduled at the next slot
-  delete-post <postId>                             remove a published post from LinkedIn
+  delete-post <postId>                             remove a published post from LinkedIn (and the weekly count)
   pause | resume                                   stop/start the worker publishing
   posts                                            published posts: id, link, and metrics entered so far
   metrics <postId> --impressions N --reactions N --comments N
@@ -36,6 +33,7 @@ const { values, positionals } = parseArgs({
     file: { type: "string" },
     at: { type: "string" },
     "dry-run": { type: "boolean" },
+    yes: { type: "boolean" },
     impressions: { type: "string" },
     reactions: { type: "string" },
     comments: { type: "string" },
@@ -88,6 +86,12 @@ async function main() {
       console.log("Rejected.");
       break;
     case "publish": {
+      const checks = await publishChecks(id());
+      for (const c of checks) console.log(`${{ block: "BLOCKED", confirm: "WARNING", info: "note" }[c.level]}: ${c.message}`);
+      if (isBlocked(checks)) throw new Error("Not published.");
+      if (needsConfirmation(checks) && !values["dry-run"] && !values.yes) {
+        throw new Error("This goes outside your usual limits. Read the warnings above, and add --yes if you still want to publish it.");
+      }
       const r = await publishDraft(id(), { dryRun: values["dry-run"], from: ["draft", "scheduled", "failed"] });
       if (!r.dryRun) {
         console.log(`Published: ${r.postUrn}`);
@@ -104,10 +108,8 @@ async function main() {
     }
     case "delete-post": {
       const n = Number(arg);
-      const [p] = await db.select().from(posts).where(eq(posts.id, n));
-      if (!p) throw new Error(`No post #${n}`);
-      await deletePost(p.linkedinUrn);
-      console.log(`Deleted ${p.linkedinUrn} from LinkedIn (the local record is kept).`);
+      await deletePublishedPost(n);
+      console.log("Deleted from LinkedIn. The draft is back in your drafts and the post no longer counts toward the weekly limit.");
       break;
     }
     case "pause":
