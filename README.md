@@ -40,6 +40,189 @@ Firecrawl          you                    OpenAI          Remotion            yo
 - **Visuals:** Remotion templates render a PDF carousel, an image card or a 15-second stat video from the post's own wording.
 - **Publishing:** LinkedIn's Posts API for text, image, PDF carousel and video.
 
+## Architecture
+
+Everything runs on one machine and shares one SQLite database. There is no queue server and no cloud dependency besides the three external APIs.
+
+### Processes and services
+
+```mermaid
+flowchart LR
+    You([You]) --> Web
+    You --> CLI
+
+    subgraph Local["Your machine"]
+        Web["Next.js dashboard<br/>src/app · server actions"]
+        CLI["CLI<br/>discover · write · queue"]
+        Job["Job runner<br/>scripts/job.ts<br/>(detached process)"]
+        Worker["Worker<br/>worker/index.ts<br/>(cron, every minute)"]
+        Core["Shared logic<br/>src/lib"]
+        DB[("SQLite<br/>data/app.db")]
+        Out[/"out/<br/>rendered media"/]
+        Remotion["Remotion renderer<br/>remotion/"]
+    end
+
+    Web -- "spawns, then polls jobs table" --> Job
+    Web --> Core
+    CLI --> Core
+    Job --> Core
+    Worker --> Core
+    Core <--> DB
+    Core --> Remotion --> Out
+
+    Core -- "news search, scrape" --> Firecrawl[(Firecrawl)]
+    Core -- "research, writing, media plan" --> OpenAI[(OpenAI)]
+    Core -- "Posts API" --> LinkedIn[(LinkedIn)]
+```
+
+| Process | Started by | Job |
+| --- | --- | --- |
+| **Dashboard** (`src/app`) | `npm run dev` / `npm run start`, bound to `127.0.0.1` | Pages, server actions, and a route that serves rendered media for previews. It only does quick database work itself. |
+| **Job runner** (`scripts/job.ts`) | The dashboard, as a detached child process per job | Long work: `write`, `visual` and `publish`. Writes progress to the `jobs` table, so a reload or closed tab does not stop it. |
+| **Worker** (`worker/index.ts`) | `npm run worker` | Every minute, publishes the next due draft unless publishing is paused or the weekly cap is reached. |
+| **CLI** (`scripts/*.ts`) | You | The same operations as the dashboard, from the terminal. |
+
+All four are thin entry points over `src/lib`, which is where the behaviour lives.
+
+### Writing a post
+
+```mermaid
+sequenceDiagram
+    actor U as You
+    participant W as Dashboard
+    participant J as Job runner
+    participant F as Firecrawl
+    participant O as OpenAI
+    participant D as SQLite
+
+    U->>W: topic + your take + styles
+    W->>D: create job (status running)
+    W-->>J: spawn detached process
+    W-->>U: redirect to progress page
+    J->>F: search and scrape sources
+    J->>O: extract sourced facts
+    J->>O: draft one variant per style
+    J->>O: humanize, improve hook, audit, fix flagged issues
+    J->>D: save drafts (status draft)
+    opt visual requested
+        J->>O: plan carousel / image / video
+        J->>J: render with Remotion into out/
+    end
+    J->>D: finish job with draft ids
+    loop while open
+        U->>W: poll /api/jobs/id
+        W->>D: read step and log
+    end
+```
+
+The job page polls `/api/jobs/[id]`. A `running` job that has not reported progress for 20 minutes is marked failed on the next read, so the page never spins forever.
+
+### Draft lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft: written
+    draft --> scheduled: approve (next free slot or chosen time)
+    draft --> rejected: reject
+    rejected --> draft: restore
+    scheduled --> rejected: reject
+    scheduled --> publishing: worker tick or "publish now"
+    draft --> publishing: "publish now"
+    failed --> publishing: "publish now"
+    publishing --> published: LinkedIn accepted the post
+    publishing --> failed: upload or publish error
+    failed --> scheduled: retry or approve again
+    published --> draft: delete post on LinkedIn
+```
+
+Moving into `publishing` is a single conditional `UPDATE ... WHERE status IN (...)`. Whoever wins that update publishes, and the loser gets an error, which is why the worker and a manual publish cannot both post the same draft. After the post is live, the draft is never moved back to `failed`, even if the first comment or a database write fails afterwards.
+
+### Publishing
+
+```mermaid
+flowchart TD
+    A[Publish now or worker tick] --> B{"evaluatePublish()<br/>src/lib/publish-rules.ts"}
+    B -- "block: published, rejected, empty, over 3,000 chars" --> X[Refuse]
+    B -- "needs confirmation: over weekly cap, under 20h since last post, paused" --> C{Confirmed?}
+    C -- no --> X
+    C -- yes --> D
+    B -- ok --> D[Claim draft atomically]
+    D --> E{Visual planned but not rendered?}
+    E -- yes --> F[Render with Remotion]
+    E -- no --> G
+    F --> G[Upload image, PDF or video]
+    G --> H[POST to LinkedIn Posts API]
+    H --> I[Insert row in posts, draft = published]
+    I --> J{First comment}
+    J -- "auto-comment on" --> K[Add comment via API]
+    J -- "auto-comment off" --> L[Show text to paste by hand]
+```
+
+### Data model
+
+```mermaid
+erDiagram
+    topics ||--o{ drafts : "written from"
+    drafts ||--o| posts : "published as"
+    topics {
+        int id PK
+        text title
+        real score
+        text status
+    }
+    drafts {
+        int id PK
+        int topic_id FK
+        text batch_id
+        text format
+        text body
+        text status
+        int scheduled_at
+        text media_kind
+    }
+    posts {
+        int id PK
+        int draft_id FK
+        text linkedin_urn
+        int impressions
+        int reactions
+        int comments
+    }
+    jobs {
+        int id PK
+        text kind
+        text status
+        text step
+        json log
+        json result
+    }
+    settings {
+        text key PK
+        json value
+    }
+    scrape_cache {
+        text url PK
+        text markdown
+    }
+    linkedin_auth {
+        int id PK
+        text access_token
+        text person_urn
+        int expires_at
+    }
+```
+
+`jobs` and `settings` (which holds the pause switch) stand alone. `scrape_cache` avoids scraping the same URL twice. The schema is in `src/lib/db/schema.ts` and is applied with `npm run db:push`.
+
+### Design decisions
+
+- **Separate processes over in-request work.** Writing and rendering take a minute or more. Running them in a detached process, with progress in the database, means a Next.js restart or a closed browser tab cannot lose a job. The cost is that the web app and the runner communicate only through SQLite.
+- **The database is the only shared state.** The dashboard, worker, job runner and CLI never call each other. SQLite in one file keeps setup to `npm run db:push`, at the price of needing a real disk, which is why it does not run on serverless platforms.
+- **Two queue modules.** `queue-core.ts` holds database-only operations, so the dashboard can import it without pulling in Remotion or OpenAI. `queue.ts` re-exports it and adds the steps that render or call a model.
+- **Rules as a pure function.** `publish-rules.ts` takes plain data and returns checks. The dashboard, the job runner, the CLI and the server action all call it, and it is unit-tested without a database.
+- **Server actions validate their own input.** They are reachable by direct POST, so every field is checked in `src/app/actions.ts`, and the job runner re-runs the publish checks before publishing.
+- **Local-only by design.** There is no login. The dev and start scripts bind to `127.0.0.1`, and demo mode (`DEMO_MODE=1`) replaces every credential and refuses writing, rendering and publishing.
+
 ## Engineering notes
 
 - **It does not invent your experience.** Drafts are built from scraped facts plus your one-line take. A separate audit pass checks every first-person sentence against that take (`src/lib/ai/write.ts`, `src/lib/ai/style.ts`).
